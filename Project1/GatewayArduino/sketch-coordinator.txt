@@ -1,0 +1,347 @@
+#include <XBee.h>
+#include <SoftwareSerial.h>
+#include <Wire.h>
+
+#define SLAVE_ADDRESS 0x04
+int number = 0;
+int state = 0;
+int humidity =0;
+int temperature =0;
+int moisture=0;
+int water=0;
+int battery;
+/*
+This example is for Series 2 XBee
+Error led is flashed if an unexpected packet is received
+*/
+
+byte sensorInterrupt = 0;  // 0 = digital pin 2
+byte sensorPin       = 2;
+
+// The hall-effect flow sensor outputs approximately 4.5 pulses per second per
+// litre/minute of flow.
+float calibrationFactor = 4.5;
+
+volatile byte pulseCount;  
+
+float flowRate;
+unsigned int flowMilliLitres;
+unsigned long totalMilliLitres;
+
+unsigned long oldTime;
+XBee xbee = XBee();
+XBeeResponse response = XBeeResponse();
+// create reusable response objects for responses we expect to handle 
+ZBRxResponse rx = ZBRxResponse();
+ModemStatusResponse msr = ModemStatusResponse();
+
+uint8_t payload[] = { 0x63, 0x68 }; // random data to be sent to the routers
+int statusLed = 13;
+int errorLed = 13;
+int dataLed = 13;
+
+void flashLed(int pin, int times, int wait) {
+    
+    for (int i = 0; i < times; i++) {
+      digitalWrite(pin, HIGH);
+      delay(wait);
+      digitalWrite(pin, LOW);
+      
+      if (i + 1 < times) {
+        delay(wait);
+      }
+    }
+}
+
+  // Define NewSoftSerial TX/RX pins
+  // Connect Arduino pin 8 to TX of usb-serial device
+  uint8_t ssRX = 6;
+  // Connect Arduino pin 9 to RX of usb-serial device
+  uint8_t ssTX = 7;
+  // Remember to connect all devices to a common Ground: XBee, Arduino and USB-Serial device
+  SoftwareSerial nss(ssRX, ssTX);
+
+void setup() {
+  pinMode(statusLed, OUTPUT);
+  pinMode(errorLed, OUTPUT);
+  pinMode(dataLed,  OUTPUT);
+  pinMode(A0,INPUT);
+  pinMode(4,INPUT);
+  pinMode(5,OUTPUT);
+  
+  // start serial for xbee
+  nss.begin(9600);
+  xbee.begin(nss);
+  // start serial for displaying the data on arduino IDE
+  Serial.begin(9600);
+  // initialize i2c as slave
+Wire.begin(SLAVE_ADDRESS);
+
+// define callbacks for i2c communication
+Wire.onReceive(receiveData);
+Wire.onRequest(sendData);
+pinMode(sensorPin, INPUT);
+  digitalWrite(sensorPin, HIGH);
+
+  pulseCount        = 0;
+  flowRate          = 0.0;
+  flowMilliLitres   = 0;
+  totalMilliLitres  = 0;
+  oldTime           = 0;
+
+ 
+  attachInterrupt(sensorInterrupt, pulseCounter, FALLING);
+  
+  flashLed(statusLed, 3, 50);
+}
+
+void sendmsg(uint32_t SH, uint32_t SL,uint8_t payload[])
+{
+  XBeeAddress64 addr64 = XBeeAddress64(SH, SL);
+  ZBTxRequest zbTx = ZBTxRequest(addr64, payload, sizeof(payload));
+  ZBTxStatusResponse txStatus = ZBTxStatusResponse();
+  
+  xbee.send(zbTx);
+    
+    flashLed(statusLed, 1, 100);
+
+    // after sending a tx request, we expect a status response
+    // wait up to half second for the status response
+    if (xbee.readPacket(500)) 
+    {
+      // got a response!
+
+      // should be a znet tx status            	
+      if (xbee.getResponse().getApiId() == ZB_TX_STATUS_RESPONSE) 
+      {
+        xbee.getResponse().getZBTxStatusResponse(txStatus);
+
+        // get the delivery status, the fifth byte
+        if (txStatus.getDeliveryStatus() == SUCCESS) 
+        {
+          // success.  time to celebrate
+          flashLed(statusLed, 5, 50);
+        } 
+        else 
+        {
+          // the remote XBee did not receive our packet. is it powered on?
+          flashLed(errorLed, 3, 500);
+        }
+      }
+    } 
+    else if (xbee.getResponse().isError()) 
+    {
+      //nss.print("Error reading packet.  Error code: ");  
+      //nss.println(xbee.getResponse().getErrorCode());
+    } 
+    else 
+    {
+      // local XBee did not provide a timely TX Status Response -- should not happen
+      flashLed(errorLed, 2, 50);
+    }
+}
+
+void readmsg()
+{
+      
+    xbee.readPacket();
+    
+    if (xbee.getResponse().isAvailable()) 
+    {
+      // got something      
+      if (xbee.getResponse().getApiId() == ZB_RX_RESPONSE) 
+      {
+        // got a zb rx packet        
+        // now fill our zb rx class
+        xbee.getResponse().getZBRxResponse(rx);
+            
+        
+     
+        char temp;
+        int test;
+        boolean humi = false;
+        boolean tempra = false;
+        boolean mois = false;
+        for (int k = 0; k < rx.getDataLength(); k++) {
+          temp = rx.getData(k);
+          if (temp =='H' && k ==0) {
+               
+             humi = true;
+          } else if (temp == 'T' && k ==0) {
+            tempra = true;
+          }else if (temp =='M' && k==0){
+            mois = true;
+          }
+          
+          if (humi && k ==3) { 
+            Serial.print("humidity:");
+            humidity=int(temp);  
+            Serial.print(int(temp));
+            
+          
+        
+            
+          }
+          if (tempra && k ==3) { 
+            Serial.print("temperature:");
+            temperature=int(temp);
+           Serial.print(int(temp));
+            
+            
+           
+          }
+           if (mois && k ==3) { 
+            Serial.print("moisture:");
+             moisture=int(temp)+309;  
+            Serial.print(int(temp));
+            
+            
+           
+            
+          }
+          
+    
+          Serial.print("\n");
+         
+          test =  int(temp);
+        }
+        
+      } 
+      else if (xbee.getResponse().getApiId() == MODEM_STATUS_RESPONSE) 
+      {
+        xbee.getResponse().getModemStatusResponse(msr);
+        // the local XBee sends this response on certain events, like association/dissociation
+        
+        if (msr.getStatus() == ASSOCIATED) 
+        {
+          // yay this is great.  flash led
+          flashLed(statusLed, 10, 10);
+        } 
+        else if (msr.getStatus() == DISASSOCIATED) 
+        {
+          // this is awful.. flash led to show our discontent
+          flashLed(errorLed, 10, 10);
+        } 
+        else 
+        {
+          // another status
+          flashLed(statusLed, 5, 10);
+        }
+      } 
+      else 
+      {
+      	// not something we were expecting
+        flashLed(errorLed, 1, 25);    
+      }
+    } 
+    else if (xbee.getResponse().isError()) 
+    {
+      //nss.print("Error reading packet.  Error code: ");  
+      //nss.println(xbee.getResponse().getErrorCode());
+    }
+}
+
+
+
+
+// continuously reads packets, looking for ZB Receive or Modem Status
+void loop() {
+  if (digitalRead(4)==HIGH){
+    digitalWrite(5,HIGH);}
+    else if (digitalRead(4)==LOW){
+      digitalWrite(5,LOW);}
+ readmsg(); // function to read and display the incoming packets
+ sendmsg(0x0013A200,0x40C8B225,payload); // sendmsg(SH of the router, SL of the router, random data)
+ delay(100);
+ sendmsg(0x0013A200,0x40C8B22D,payload);
+ delay(100);
+ battery=analogRead(A0);
+ Serial.print(battery);
+  Serial.print("\n");
+   if((millis() - oldTime) > 1000)    // Only process counters once per second
+  { 
+    // Disable the interrupt while calculating flow rate and sending the value to
+    // the host
+    detachInterrupt(sensorInterrupt);
+        
+    // Because this loop may not complete in exactly 1 second intervals we calculate
+    // the number of milliseconds that have passed since the last execution and use
+    // that to scale the output. We also apply the calibrationFactor to scale the output
+    // based on the number of pulses per second per units of measure (litres/minute in
+    // this case) coming from the sensor.
+    flowRate = ((1000.0 / (millis() - oldTime)) * pulseCount) / calibrationFactor;
+    
+    // Note the time this processing pass was executed. Note that because we've
+    // disabled interrupts the millis() function won't actually be incrementing right
+    // at this point, but it will still return the value it was set to just before
+    // interrupts went away.
+    oldTime = millis();
+    
+    // Divide the flow rate in litres/minute by 60 to determine how many litres have
+    // passed through the sensor in this 1 second interval, then multiply by 1000 to
+    // convert to millilitres.
+    flowMilliLitres = (flowRate / 60) * 1000;
+    
+    // Add the millilitres passed in this second to the cumulative total
+    totalMilliLitres += flowMilliLitres;
+      
+    unsigned int frac;
+    
+    
+
+    // Print the cumulative total of litres flowed since starting
+    Serial.print("Output Liquid Quantity: ");             // Output separator
+    Serial.print(totalMilliLitres);
+    water=int(totalMilliLitres);
+    Serial.println("mL"); 
+
+    // Reset the pulse counter so we can start incrementing again
+    pulseCount = 0;
+    
+    // Enable the interrupt again now that we've finished sending output
+    attachInterrupt(sensorInterrupt, pulseCounter, FALLING);
+  }
+
+}
+// callback for received data
+void receiveData(int byteCount){
+
+while(Wire.available()) {
+number = Wire.read();
+Serial.print("data received: ");
+Serial.println(number);
+}
+}
+
+
+// callback for sending data
+void sendData(){
+   switch (number) {
+      case 1:
+        Wire.write(temperature);
+        break;
+      case 2:
+        Wire.write(humidity);
+        break;
+      case 3:
+        Wire.write(moisture);
+        break;
+      case 4:
+        Wire.write(water);
+        break;
+      case 5:
+        Wire.write(battery);
+        break;
+      case 6:
+        totalMilliLitres=0;
+        Wire.write(water);
+        break;  
+      default:
+  Wire.write(99);     
+}
+}
+void pulseCounter()
+{
+  // Increment the pulse counter
+  pulseCount++;
+}
