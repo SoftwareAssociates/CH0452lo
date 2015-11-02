@@ -1,0 +1,7 @@
+[sensor]
+temp = 90
+hum = 2
+moisture = 5
+waterused = 50
+battery = 90
+stateofvalve = ON
