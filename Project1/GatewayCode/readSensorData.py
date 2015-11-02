@@ -109,3 +109,5 @@ class ReadSensorData:
 
 objReadSensorData = ReadSensorData()
 objReadSensorData.run()
+
+

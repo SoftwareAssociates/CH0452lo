@@ -83,3 +83,4 @@ class DailyReport:
 
 objDailyReport = DailyReport()
 objDailyReport.run()
+

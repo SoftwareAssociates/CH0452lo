@@ -66,3 +66,5 @@ class DisplayPeriodicMessage:
 
 obDisplay = DisplayPeriodicMessage()
 obDisplay.run()
+
+

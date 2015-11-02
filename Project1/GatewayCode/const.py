@@ -45,3 +45,5 @@ class Constant:
         self.SENSOR_DATA_FILE = self.DATA_PATH + 'sensorData.cnf'
         if self.PY_SCRIPT_PATH == "/home/web/Python/iot/taitafarm":
             self.live = False
+
+
